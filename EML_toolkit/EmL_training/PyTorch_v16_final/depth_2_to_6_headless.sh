@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Avoid RenderMan python path pollution
+export PYTHONPATH=""
+
 # Lighter repeats for easy depths:
 python3 tree_prototype_torch_v16_final.py --target-fn eml_depth2 --depth 2 --save-prefix pnas_d2_random --init-strategy all --seed0 137 --seeds 8 --data-lo 1.0 --data-hi 3.0 --data-step 0.1 --gen-lo 0.5 --gen-hi 5.0 --search-iters 6000 --hardening-iters 2000 --patience 4200 --eval-every 200 --tail-eval-every 50 --skip-plot
 python3 tree_prototype_torch_v16_final.py --target-fn eml_depth3 --depth 3 --save-prefix pnas_d3_random --init-strategy all --seed0 137 --seeds 16 --data-lo 1.0 --data-hi 3.0 --data-step 0.1 --gen-lo 0.5 --gen-hi 5.0 --search-iters 6000 --hardening-iters 2000 --patience 4200 --eval-every 200 --tail-eval-every 50 --skip-plot
