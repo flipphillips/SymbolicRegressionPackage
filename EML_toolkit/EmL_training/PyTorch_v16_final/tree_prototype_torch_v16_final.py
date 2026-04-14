@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 from datetime import datetime
 import numbers
+import concurrent.futures
 
 import matplotlib
 if "--skip-plot" in sys.argv:
@@ -29,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.multiprocessing
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1064,6 +1066,7 @@ def parse_args():
 
     # Output
     a("--save-prefix", type=str, default="v16_run")
+    a("--workers", type=int, default=1, help="Number of parallel workers (seeds) to run.")
     a("--export-m", type=str, default="eml_tree_v16_final.m")
     a("--skip-plot", action="store_true")
     a("--loss-y-min", type=float, default=1e-16)
@@ -1086,6 +1089,12 @@ def parse_args():
 
 
 def main():
+    if "--workers" in sys.argv:
+        try:
+            torch.multiprocessing.set_start_method("spawn", force=True)
+        except RuntimeError:
+            pass
+
     args = parse_args()
     target_fn, target_desc = get_target_fn(args.target_fn)
 
@@ -1143,12 +1152,8 @@ def main():
         n_symbol_success = 0
         n_stable_symbol_success = 0
 
-        for run_idx, (seed, strategy) in enumerate(run_plan, start=1):
-            print(f"\n--- Run {run_idx}/{len(run_plan)}: seed={seed} strategy={strategy} ---")
-            tree, snapped_tree, hist, summary = train_one_seed(
-                seed, strategy, args, x_train, y_train, t_train, manual_init_fn=manual_init_fn if strategy == "manual" else None
-            )
-
+        def _process_result(run_idx, seed, strategy, tree, snapped_tree, hist, summary):
+            nonlocal n_success, n_fit_success, n_symbol_success, n_stable_symbol_success, best
             gen_mse, gen_max_real, gen_max_imag = evaluate(snapped_tree, x_gen, y_gen, t_gen, tau=0.01)
             print(f"seed={seed} gen_rmse={math.sqrt(max(gen_mse, 0.0)):.3e} max_real={gen_max_real:.3e} max_imag={gen_max_imag:.3e}")
 
@@ -1194,6 +1199,43 @@ def main():
                     "gen_mse": gen_mse,
                 }
             )
+
+        if args.workers > 1:
+            if not args.skip_plot:
+                print("WARNING: Parallel workers enabled, forcing --skip-plot for stability.")
+                args.skip_plot = True
+
+            print(f"Starting parallel execution with {args.workers} workers...")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:
+                futures = {
+                    executor.submit(
+                        train_one_seed,
+                        seed,
+                        strategy,
+                        args,
+                        x_train,
+                        y_train,
+                        t_train,
+                        manual_init_fn=manual_init_fn if strategy == "manual" else None
+                    ): (run_idx, seed, strategy)
+                    for run_idx, (seed, strategy) in enumerate(run_plan, start=1)
+                }
+
+                for future in concurrent.futures.as_completed(futures):
+                    run_idx, seed, strategy = futures[future]
+                    try:
+                        tree, snapped_tree, hist, summary = future.result()
+                        print(f"Finished Run {run_idx}/{len(run_plan)}: seed={seed} strategy={strategy}")
+                        _process_result(run_idx, seed, strategy, tree, snapped_tree, hist, summary)
+                    except Exception as e:
+                        print(f"Run {run_idx} (seed {seed}, strategy {strategy}) failed with: {e}")
+        else:
+            for run_idx, (seed, strategy) in enumerate(run_plan, start=1):
+                print(f"\n--- Run {run_idx}/{len(run_plan)}: seed={seed} strategy={strategy} ---")
+                tree, snapped_tree, hist, summary = train_one_seed(
+                    seed, strategy, args, x_train, y_train, t_train, manual_init_fn=manual_init_fn if strategy == "manual" else None
+                )
+                _process_result(run_idx, seed, strategy, tree, snapped_tree, hist, summary)
 
         print("\n" + "=" * 60)
         print(
