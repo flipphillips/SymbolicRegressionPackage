@@ -31,6 +31,7 @@ import torch
 import torch.nn as nn
 
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = torch.complex128
 REAL_DTYPE = torch.float64
 # Default: no practical clamping (1e300 is safely below float64 max ~1.8e308).
@@ -323,13 +324,13 @@ class EMLTree(nn.Module):
         self.blend_logits = nn.Parameter(gate_init)
 
     def forward(self, x, y, tau_leaf=1.0, tau_gate=1.0):
-        x = x.to(DTYPE)
-        y = y.to(DTYPE)
+        x = x.to(device=DEVICE, dtype=DTYPE)
+        y = y.to(device=DEVICE, dtype=DTYPE)
         batch_size = x.shape[0]
 
         leaf_probs = torch.softmax(self.leaf_logits / tau_leaf, dim=1)
         weights = leaf_probs.to(DTYPE)
-        ones = torch.ones(batch_size, dtype=DTYPE)
+        ones = torch.ones(batch_size, device=DEVICE, dtype=DTYPE)
         candidates = torch.stack([ones, x, y], dim=1)
         current_level = torch.matmul(candidates, weights.T)
 
@@ -498,9 +499,9 @@ def make_grid_data(target_fn, lo=1.0, hi=3.0, step=0.1):
     xx, yy, tt = _filter_real_domain(xx, yy, target_fn, label="train grid")
     print(f"Training data: {len(xx)} valid points on [{lo}, {hi}]^2 step={step}")
     return (
-        torch.tensor(xx, dtype=REAL_DTYPE),
-        torch.tensor(yy, dtype=REAL_DTYPE),
-        torch.tensor(tt, dtype=DTYPE),
+        torch.tensor(xx, device=DEVICE, dtype=REAL_DTYPE),
+        torch.tensor(yy, device=DEVICE, dtype=REAL_DTYPE),
+        torch.tensor(tt, device=DEVICE, dtype=DTYPE),
     )
 
 
@@ -516,9 +517,9 @@ def make_generalization_data(target_fn, lo=0.5, hi=5.0, n=4000, seed=12345):
         x_ok, y_ok, t_ok = x_ok[:n], y_ok[:n], t_ok[:n]
     print(f"Generalization data: {len(x_ok)} valid points on [{lo}, {hi}]^2")
     return (
-        torch.tensor(x_ok, dtype=REAL_DTYPE),
-        torch.tensor(y_ok, dtype=REAL_DTYPE),
-        torch.tensor(t_ok, dtype=DTYPE),
+        torch.tensor(x_ok, device=DEVICE, dtype=REAL_DTYPE),
+        torch.tensor(y_ok, device=DEVICE, dtype=REAL_DTYPE),
+        torch.tensor(t_ok, device=DEVICE, dtype=DTYPE),
     )
 
 
@@ -554,7 +555,7 @@ def compute_losses(
     binarity = (gate_bin * gate_unc).mean()
 
     sparse = torch.mean(1.0 - gate_probs)
-    inter_penalty = torch.tensor(0.0, dtype=REAL_DTYPE)
+    inter_penalty = torch.tensor(0.0, device=DEVICE, dtype=REAL_DTYPE)
     if lam_inter > 0 and eml_outputs:
         for lo in eml_outputs:
             excess = torch.relu(lo.abs() - inter_threshold)
@@ -716,6 +717,7 @@ def make_manual_init_fn(args):
 def train_one_seed(seed, strategy, args, x_train, y_train, t_train, manual_init_fn=None):
     torch.manual_seed(seed)
     tree = EMLTree(depth=args.depth, init_scale=args.init_scale, init_strategy=strategy, eml_clamp=args.eml_clamp)
+    tree.to(DEVICE)
     if manual_init_fn is not None:
         manual_init_fn(tree)
         if args.init_noise > 0:
@@ -1204,6 +1206,7 @@ def main():
 
         if best["state"] is not None:
             best_tree = EMLTree(depth=args.depth, eml_clamp=args.eml_clamp)
+            best_tree.to(DEVICE)
             best_tree.load_state_dict(best["state"])
             export_path = output_dir / args.export_m
             best_tree.export_mathematica(str(export_path), discretize=True, snap_threshold=args.snap_threshold)
