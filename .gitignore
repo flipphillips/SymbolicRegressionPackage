@@ -1,0 +1,9 @@
+venv
+test_run
+test_gpu
+test_parallel
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+pnas_d2_random
